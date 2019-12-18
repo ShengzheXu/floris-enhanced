@@ -40,6 +40,13 @@ class FlorisInterface():
 
         self.floris.farm.flow_field.calculate_wake()
 
+    # Extension by WF-2.0
+    def marl_fi_calculate_wake(self, turb_i, init_paras=False, final_paras=False, yaw_angles=None):
+        if yaw_angles is not None:
+            self.floris.farm.set_yaw_angles(yaw_angles)
+
+        self.floris.farm.flow_field.marl_calculate_wake(turb_i, init_paras, final_paras)
+
     def reinitialize_flow_field(self,
                                 wind_speed=None,
                                 wind_direction=None,
