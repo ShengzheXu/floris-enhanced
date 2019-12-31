@@ -73,6 +73,12 @@ class FlowField():
     def reset_windstep(self):
         self.wind_step = 0
         self.multi_lable = True
+    
+    def check_done(self):
+        if self.wind_step >= len(self.multi_ws[self.turbine_map.turbines[0]]):
+            return True
+        else:
+            return False
 
     def _discretize_turbine_domain(self):
         """
@@ -138,7 +144,7 @@ class FlowField():
         else:
             self.u_initial = np.zeros(np.shape(self.z)) 
             for i in range(len(self.u_initial)):
-                # print('??',i,len(self.turbine_map.turbines), len(self.u_initial),self.wind_step, len(self.multi_ws[self.turbine_map.turbines[i]]))
+                print('??',i,len(self.turbine_map.turbines), len(self.u_initial),self.wind_step, len(self.multi_ws[self.turbine_map.turbines[i]]))
                 self.u_initial[i] = self.multi_ws[self.turbine_map.turbines[i]][self.wind_step] * \
                     (self.z[i] / self.specified_wind_height)**self.wind_shear
         self.v_initial = np.zeros(np.shape(self.u_initial))
