@@ -53,6 +53,7 @@ class FlowField():
                  wake,
                  turbine_map):
 
+        self.multi_lable = False
         self.reinitialize_flow_field(
             wind_speed=wind_speed,
             wind_direction=wind_direction,
@@ -64,6 +65,14 @@ class FlowField():
             turbine_map=turbine_map,
             with_resolution=wake.velocity_model.model_grid_resolution
         )
+        self.multi_wd = {}
+        self.multi_ws = {}
+        self.wind_step = 0
+
+    # Extended by WF-2.0    
+    def reset_windstep(self):
+        self.wind_step = 0
+        self.multi_lable = True
 
     def _discretize_turbine_domain(self):
         """
@@ -122,8 +131,16 @@ class FlowField():
         else:
             self.x, self.y, self.z = self._discretize_turbine_domain()
 
-        self.u_initial = self.wind_speed * \
-            (self.z / self.specified_wind_height)**self.wind_shear
+        if not self.multi_lable:
+            self.u_initial = self.wind_speed * \
+                (self.z / self.specified_wind_height)**self.wind_shear
+            # print('^^^^^^^^^^^^^^^^', len(self.u_initial), len(self.z))
+        else:
+            self.u_initial = np.zeros(np.shape(self.z)) 
+            for i in range(len(self.u_initial)):
+                # print('??',i,len(self.turbine_map.turbines), len(self.u_initial),self.wind_step, len(self.multi_ws[self.turbine_map.turbines[i]]))
+                self.u_initial[i] = self.multi_ws[self.turbine_map.turbines[i]][self.wind_step] * \
+                    (self.z[i] / self.specified_wind_height)**self.wind_shear
         self.v_initial = np.zeros(np.shape(self.u_initial))
         self.w_initial = np.zeros(np.shape(self.u_initial))
 
@@ -462,6 +479,14 @@ class FlowField():
         return self._xmin, self._xmax, self._ymin, self._ymax, self._zmin, self._zmax
 
     # Extension by WF-2.0
+    def marl_set_turbine_dirspeed(self, wind_dir_list, wind_speed_list):
+        for ith in range(len(self.sorted_map)):
+            coord, turbine = self.sorted_map[ith]
+            self.multi_wd[turbine] = wind_dir
+            self.multi_ds[turbine] = wind_speed
+        self.multi_lable = True
+
+    # Extension by WF-2.0
     def marl_calculate_wake(self, ith, init_paras=False, final_paras=False, no_wake=False):
         if init_paras:
             # define the center of rotation with reference to 270 deg
@@ -485,8 +510,10 @@ class FlowField():
             self.w_wake = np.zeros(np.shape(self.u))
 
         coord, turbine = self.sorted_map[ith]
-
+        # print(coord)
+        # input()
         # update the turbine based on the velocity at its hub
+        
         turbine.update_velocities(
             self.u_wake, coord, self, self.rotated_x, self.rotated_y, self.rotated_z)
 
@@ -553,3 +580,106 @@ class FlowField():
             if self.wake.velocity_model.model_string == 'curl':
                 self.x, self.y, self.z = self._rotated_grid(
                     -1 * self.wind_direction, center_of_rotation)
+
+    
+    # 1. 处理每个风车a的时候按当前风向旋转
+    # 2. 按风向拆解b的风速，再合成,combine
+
+    # Extension by WF-2.0
+    def marl_multidir_calculate_wake(self, coord, no_wake=False):
+        # define the center of rotation with reference to 270 deg
+        center_of_rotation = Vec3(0, 0, 0)
+        turbine_list = self.turbine_map.turbines()
+        turbine = self.turbine_map.items[coord]
+
+        # Rotate the turbines such that they are now in the frame of reference
+        # of the wind direction simpifying computing the wakes and wake overlap
+        rotate_wd = self.multi_wd[turbine][self.wind_step] if self.multi_label else self.wind_direction        
+        rotated_map = self.turbine_map.rotated(
+            self.rotate_wd, center_of_rotation)
+
+        # rotate the discrete grid and turbine map
+        self.rotated_x, self.rotated_y, self.rotated_z = self._rotated_dir(
+            rotate_wd, center_of_rotation, rotated_map)
+
+        # sort the turbine map
+        self.sorted_map = rotated_map.sorted_in_x_as_list()
+
+        # calculate the velocity deficit and wake deflection on the mesh
+        self.u_wake = np.zeros(np.shape(self.u))
+        self.v_wake = np.zeros(np.shape(self.u))
+        self.w_wake = np.zeros(np.shape(self.u))
+
+        # coord, turbine = self.sorted_map[ith]i
+        
+
+        # update the turbine based on the velocity at its hub
+        turbine.update_velocities(
+            self.u_wake, coord, self, self.rotated_x, self.rotated_y, self.rotated_z)
+
+        # get the wake deflecton field
+        deflection = self._compute_turbine_wake_deflection(
+            self.rotated_x, self.rotated_y, turbine, coord, self)
+
+        # get the velocity deficit accounting for the deflection
+        turb_u_wake, turb_v_wake, turb_w_wake = self._compute_turbine_velocity_deficit(
+            self.rotated_x, self.rotated_y, self.rotated_z, turbine, coord, deflection, self.wake, self)
+
+        # include turbulence model for the gaussian wake model from Porte-Agel
+        if self.wake.velocity_model.model_string == 'gauss':
+
+            # compute area overlap of wake on other turbines and update downstream turbine turbulence intensities
+            for coord_ti, turbine_ti in self.sorted_map:
+
+                if coord_ti.x1 > coord.x1 and np.abs(coord.x2 - coord_ti.x2) < 2*turbine.rotor_diameter:
+                    # only assess the effects of the current wake
+
+                    freestream_velocities = turbine_ti.calculate_swept_area_velocities(
+                        self.wind_direction,
+                        self.u_initial,
+                        coord_ti,
+                        self.rotated_x,
+                        self.rotated_y,
+                        self.rotated_z)
+
+                    wake_velocities = turbine_ti.calculate_swept_area_velocities(
+                        self.wind_direction,
+                        self.u_initial - turb_u_wake,
+                        coord_ti,
+                        self.rotated_x,
+                        self.rotated_y,
+                        self.rotated_z)
+
+                    area_overlap = self._calculate_area_overlap(
+                        wake_velocities, freestream_velocities, turbine)
+                    if area_overlap > 0.0:
+                        turbine_ti.turbulence_intensity = turbine_ti.calculate_turbulence_intensity(
+                            self.turbulence_intensity,
+                            self.wake.velocity_model,
+                            coord_ti,
+                            coord,
+                            turbine
+                        )
+
+        # combine this turbine's wake into the full wake field
+        if not no_wake:
+            # TODO: why not use the wake combination scheme in every component?
+            self.u_wake = self.wake.combination_function(self.u_wake, turb_u_wake)
+            self.v_wake = (self.v_wake + turb_v_wake)
+            self.w_wake = (self.w_wake + turb_w_wake)
+
+        # apply the velocity deficit field to the freestream
+        if not no_wake:
+            # TODO: are these signs correct?
+            u_horizon = [x*np.cos(self.multi_wd[turb][self.wind_step]) for x, turb in zip(self.u_initial, turbine_list)] 
+            u_vertical = [x*np.sin(self.multi_wd[turb][self.wind_step]) for x, turb in zip(self.u_initial, turbine_list)]  
+            for i in range(len(u_horizon)):
+                self.u[i] = np.sqrt((u_horizon[i] - self.u_wake[i]) ** 2 + (u_vertical[i]) ** 2)
+            # self.u = self.u_initial - self.u_wake
+            self.v = self.v_initial + self.v_wake
+            self.w = self.w_initial + self.w_wake
+
+        # rotate the grid if it is curl
+        if self.wake.velocity_model.model_string == 'curl':
+            self.x, self.y, self.z = self._rotated_grid(
+                -1 * self.wind_direction, center_of_rotation)
