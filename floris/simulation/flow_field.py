@@ -53,7 +53,8 @@ class FlowField():
                  wake,
                  turbine_map):
 
-        self.multi_lable = False
+        # You can install a the `Code Spell Checker` addon in VSC to avoid typo
+        self.multi_label = False
         self.reinitialize_flow_field(
             wind_speed=wind_speed,
             wind_direction=wind_direction,
@@ -65,6 +66,8 @@ class FlowField():
             turbine_map=turbine_map,
             with_resolution=wake.velocity_model.model_grid_resolution
         )
+        # You had better use the full words, such as `multi_wind_directions` or
+        # `wind_direction_data`
         self.multi_wd = {}
         self.multi_ws = {}
         self.wind_step = 0
@@ -72,7 +75,7 @@ class FlowField():
     # Extended by WF-2.0    
     def reset_windstep(self):
         self.wind_step = 0
-        self.multi_lable = True
+        self.multi_label = True
     
     def check_done(self):
         if self.wind_step >= len(self.multi_ws[self.turbine_map.turbines[0]]):
@@ -137,11 +140,12 @@ class FlowField():
         else:
             self.x, self.y, self.z = self._discretize_turbine_domain()
 
-        if not self.multi_lable:
+        if not self.multi_label:
             self.u_initial = self.wind_speed * \
                 (self.z / self.specified_wind_height)**self.wind_shear
             # print('^^^^^^^^^^^^^^^^', len(self.u_initial), len(self.z))
         else:
+            # Does this part compatable with the situation when `with_resolution` is not None? That's the line 136.
             self.u_initial = np.zeros(np.shape(self.z)) 
             for i in range(len(self.u_initial)):
                 print('??',i,len(self.turbine_map.turbines), len(self.u_initial),self.wind_step, len(self.multi_ws[self.turbine_map.turbines[i]]))
@@ -485,12 +489,13 @@ class FlowField():
         return self._xmin, self._xmax, self._ymin, self._ymax, self._zmin, self._zmax
 
     # Extension by WF-2.0
+    # change to marl_set_turbine_direction_speed
     def marl_set_turbine_dirspeed(self, wind_dir_list, wind_speed_list):
         for ith in range(len(self.sorted_map)):
             coord, turbine = self.sorted_map[ith]
-            self.multi_wd[turbine] = wind_dir
+            self.multi_wd[turbine] = wind_dir # Where do `wind_dir` and `wind_speed` come from?
             self.multi_ds[turbine] = wind_speed
-        self.multi_lable = True
+        self.multi_label = True
 
     # Extension by WF-2.0
     def marl_calculate_wake(self, ith, init_paras=False, final_paras=False, no_wake=False):
@@ -592,6 +597,7 @@ class FlowField():
     # 2. 按风向拆解b的风速，再合成,combine
 
     # Extension by WF-2.0
+    # marl_calculate_wake_with_multi_direction
     def marl_multidir_calculate_wake(self, coord, no_wake=False):
         # define the center of rotation with reference to 270 deg
         center_of_rotation = Vec3(0, 0, 0)
