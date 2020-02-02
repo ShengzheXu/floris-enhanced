@@ -203,14 +203,15 @@ class FlorisInterface():
         Returns:
             :py:class:`floris.tools.flow_data.FlowData`: FlowData object
         """
-
+        
         if resolution is None:
             if not self.floris.farm.flow_field.wake.velocity_model.requires_resolution:
                 print('Assuming grid with spacing %d' % grid_spacing)
                 xmin, xmax, ymin, ymax, zmin, zmax = self.floris.farm.flow_field.domain_bounds
                 resolution = Vec3(1 + (xmax - xmin) / grid_spacing,
-                                  1 + (ymax - ymin) / grid_spacing,
-                                  1 + (zmax - zmin) / grid_spacing)
+                                1 + (ymax - ymin) / grid_spacing,
+                                1 + (zmax - zmin) / grid_spacing)
+                self.grid_spacing_if_need = grid_spacing
             else:
                 print('Assuming model resolution')
                 resolution = self.floris.farm.flow_field.wake.velocity_model.model_grid_resolution

@@ -53,7 +53,7 @@ class FlowField():
                  wake,
                  turbine_map):
 
-        self.multi_lable = False
+        self.multi_label = False
         self.reinitialize_flow_field(
             wind_speed=wind_speed,
             wind_direction=wind_direction,
@@ -65,17 +65,18 @@ class FlowField():
             turbine_map=turbine_map,
             with_resolution=wake.velocity_model.model_grid_resolution
         )
-        self.multi_wd = {}
-        self.multi_ws = {}
+        self.multi_wind_direction = {}
+        self.multi_wind_speed = {}
+        self.multi_wind_location = {}
         self.wind_step = 0
 
     # Extended by WF-2.0    
     def reset_windstep(self):
         self.wind_step = 0
-        self.multi_lable = True
+        self.multi_label = True
     
     def check_done(self):
-        if self.wind_step >= len(self.multi_ws[self.turbine_map.turbines[0]]):
+        if self.wind_step >= len(self.multi_wind_speed[self.turbine_map.turbines[0]]):
             return True
         else:
             return False
@@ -127,7 +128,57 @@ class FlowField():
         x = np.linspace(xmin, xmax, int(resolution.x1))
         y = np.linspace(ymin, ymax, int(resolution.x2))
         z = np.linspace(zmin, zmax, int(resolution.x3))
+        print('resolution',resolution.x1, resolution.x2, resolution.x3)
+        # print(z)
+        # print(x)
+        # print(y)
+        # input()
         return np.meshgrid(x, y, z, indexing="ij")
+    
+    def _marl_flood_fill(self, windcube, i, j, z_len):
+        if windcube[i,j,9] == 0:
+            return 0
+        rt = 0
+        if i-1 >= 0 and windcube[i-1,j,9] == 0:
+            windcube[i-1,j,:] = windcube[i,j,9]
+            rt += 1
+        if j-1 >= 0 and windcube[i,j-1,0] == 0:
+            windcube[i,j-1,:] = windcube[i,j,9]
+            rt += 1
+        if i+1 < windcube.shape[0] and windcube[i+1,j,9]==0:
+            windcube[i+1,j,:] = windcube[i,j,9]
+            rt += 1
+        if j+1 <windcube.shape[1] and windcube[i,j+1,9]==0:
+            windcube[i,j+1,:] = windcube[i,j,9]
+            rt += 1
+        return rt
+
+    def _marl_wind_deploy_with_resolution(self):
+        wind_speed_resolution = np.zeros(np.shape(self.z))
+        x_len, y_len, z_len = np.shape(self.z)
+        xmin, xmax, ymin, ymax, zmin, zmax = self.domain_bounds
+        for i in range(len(self.turbine_map.turbines)):
+            # print(self.multi_wind_speed.keys())
+            # print(self.turbine_map.turbines[i])
+            ws = self.multi_wind_speed[self.turbine_map.turbines[i]][self.wind_step]
+            # TODO wd = self.multi_wind_direction[self.turbine_map.turbines[i]][self.wind_step]
+            # apply u,v,w with wind direction
+            (loc_x, loc_y) = self.multi_wind_location[self.turbine_map.turbines[i]]
+            # print(type(wind_speed_resolution))
+            # for k in range(z_len):
+            # print(loc_x, xmin)
+            wind_speed_resolution[int(1+(loc_x-xmin)/10), int(1+(loc_y-ymin)/10),:] = ws
+        done_pixels = len(self.turbine_map.turbines)
+        tot_pixels = np.shape(self.z)[0] * np.shape(self.z)[1]
+        # print(done_pixels, tot_pixels)
+        # input()
+        while done_pixels < tot_pixels:
+            print('done:', done_pixels, ' , tot:', tot_pixels)
+            for i in range(np.shape(self.z)[0]):
+                for j in range(np.shape(self.z)[1]):
+                    done_pixels += self._marl_flood_fill(wind_speed_resolution,i,j, z_len)
+        # input('finish')
+        return wind_speed_resolution
 
     def _compute_initialized_domain(self, with_resolution=None):
         if with_resolution is not None:
@@ -137,16 +188,39 @@ class FlowField():
         else:
             self.x, self.y, self.z = self._discretize_turbine_domain()
 
-        if not self.multi_lable:
-            self.u_initial = self.wind_speed * \
-                (self.z / self.specified_wind_height)**self.wind_shear
+        if (not self.multi_label or with_resolution is not None) \
+            and hasattr(self, 'multi_wind_speed') and len(self.multi_wind_speed)>0:
+            wind_speed_resolution = self._marl_wind_deploy_with_resolution()
+            # self.u_initial = self.wind_speed * \
+            #     (self.z / self.specified_wind_height)**self.wind_shear
+            self.u_initial = np.multiply(wind_speed_resolution, \
+                (self.z / self.specified_wind_height))**self.wind_shear
+                
+            print(self.x.shape)
+            print(self.y.shape)
+            print(self.z.shape)
+            print(self.u_initial.shape)
+            print(self.u_initial)
+            print(self.z)
+            print('??relosution', with_resolution)
+            print('z', self.domain_bounds)
+            print('windheight', self.specified_wind_height)
+
             # print('^^^^^^^^^^^^^^^^', len(self.u_initial), len(self.z))
-        else:
+            # print(self.u_initial)
+            # print(self.z)
+            # print(self.specified_wind_height)
+            # print(self.wind_shear)
+            # input()
+        elif hasattr(self, 'wind_step') and len(self.multi_wind_speed)>0:
             self.u_initial = np.zeros(np.shape(self.z)) 
             for i in range(len(self.u_initial)):
-                print('??',i,len(self.turbine_map.turbines), len(self.u_initial),self.wind_step, len(self.multi_ws[self.turbine_map.turbines[i]]))
-                self.u_initial[i] = self.multi_ws[self.turbine_map.turbines[i]][self.wind_step] * \
+                print(len(self.u_initial),len(self.u_initial[0]))
+                print('??',i,len(self.turbine_map.turbines), len(self.u_initial),self.wind_step, len(self.multi_wind_speed[self.turbine_map.turbines[i]]))
+                self.u_initial[i] = self.multi_wind_speed[self.turbine_map.turbines[i]][self.wind_step] * \
                     (self.z[i] / self.specified_wind_height)**self.wind_shear
+        else:
+            self.u_initial = np.zeros(np.shape(self.z))
         self.v_initial = np.zeros(np.shape(self.u_initial))
         self.w_initial = np.zeros(np.shape(self.u_initial))
 
@@ -485,12 +559,12 @@ class FlowField():
         return self._xmin, self._xmax, self._ymin, self._ymax, self._zmin, self._zmax
 
     # Extension by WF-2.0
-    def marl_set_turbine_dirspeed(self, wind_dir_list, wind_speed_list):
-        for ith in range(len(self.sorted_map)):
-            coord, turbine = self.sorted_map[ith]
-            self.multi_wd[turbine] = wind_dir
-            self.multi_ds[turbine] = wind_speed
-        self.multi_lable = True
+    # def marl_set_turbine_dirspeed(self, wind_dir_list, wind_speed_list):
+    #     for ith in range(len(self.sorted_map)):
+    #         coord, turbine = self.sorted_map[ith]
+    #         self.multi_wind_direction[turbine] = wind_dir
+    #         self.multi_ds[turbine] = wind_speed
+    #     self.multi_label = True
 
     # Extension by WF-2.0
     def marl_calculate_wake(self, ith, init_paras=False, final_paras=False, no_wake=False):
@@ -592,7 +666,7 @@ class FlowField():
     # 2. 按风向拆解b的风速，再合成,combine
 
     # Extension by WF-2.0
-    def marl_multidir_calculate_wake(self, coord, no_wake=False):
+    def marl_calculate_wake_with_multi_direction(self, coord, no_wake=False):
         # define the center of rotation with reference to 270 deg
         center_of_rotation = Vec3(0, 0, 0)
         turbine_list = self.turbine_map.turbines()
@@ -600,7 +674,7 @@ class FlowField():
 
         # Rotate the turbines such that they are now in the frame of reference
         # of the wind direction simpifying computing the wakes and wake overlap
-        rotate_wd = self.multi_wd[turbine][self.wind_step] if self.multi_label else self.wind_direction        
+        rotate_wd = self.multi_wind_direction[turbine][self.wind_step] if self.multi_label else self.wind_direction        
         rotated_map = self.turbine_map.rotated(
             self.rotate_wd, center_of_rotation)
 
@@ -677,8 +751,8 @@ class FlowField():
         # apply the velocity deficit field to the freestream
         if not no_wake:
             # TODO: are these signs correct?
-            u_horizon = [x*np.cos(self.multi_wd[turb][self.wind_step]) for x, turb in zip(self.u_initial, turbine_list)] 
-            u_vertical = [x*np.sin(self.multi_wd[turb][self.wind_step]) for x, turb in zip(self.u_initial, turbine_list)]  
+            u_horizon = [x*np.cos(self.multi_wind_direction[turb][self.wind_step]) for x, turb in zip(self.u_initial, turbine_list)] 
+            u_vertical = [x*np.sin(self.multi_wind_direction[turb][self.wind_step]) for x, turb in zip(self.u_initial, turbine_list)]  
             for i in range(len(u_horizon)):
                 self.u[i] = np.sqrt((u_horizon[i] - self.u_wake[i]) ** 2 + (u_vertical[i]) ** 2)
             # self.u = self.u_initial - self.u_wake
